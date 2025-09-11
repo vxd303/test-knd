@@ -64,6 +64,8 @@ jobs:
           repo init -u https://android.googlesource.com/platform/manifest -b llvm-toolchain
           cp ../patcher/manifest_8481493.xml .repo/manifests/
           repo init -m manifest_8481493.xml
+          cp .repo/repo/repo ~/.local/bin/repo
+          repo --version
           # Bây giờ lệnh này sẽ hoạt động vì chúng ta đang dùng repo phiên bản mới
           repo sync -c -j$(nproc) --no-clone-bundle --no-tags --depth=1
 
