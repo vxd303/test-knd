@@ -1,0 +1,58 @@
+# Tên của quy trình tự động, sẽ hiển thị trên tab Actions của GitHub
+name: Build OLLVM NDK Toolchain
+
+# Cấu hình các sự kiện sẽ kích hoạt workflow này
+on:
+  # Cho phép chạy workflow này một cách thủ công từ giao diện web
+  workflow_dispatch:
+
+jobs:
+  build:
+    # Tên của công việc (job)
+    name: Build OLLVM for NDK r23c
+
+    # Sử dụng máy ảo Ubuntu phiên bản mới nhất do GitHub cung cấp
+    runs-on: ubuntu-latest
+
+    # Các bước sẽ được thực thi trong job này
+    steps:
+      # Bước 1: Tải mã nguồn từ repository của codetronik
+      - name: Checkout OLLVM NDK repository
+        uses: actions/checkout@v4
+        with:
+          # Chỉ định repository cần tải
+          repository: codetronik/ollvm-ndk
+          # Chỉ định nhánh (branch) cụ thể là r23c
+          ref: r23c
+
+      # Bước 2: Cài đặt và cấu hình ccache để tăng tốc các lần build sau
+      - name: Set up ccache
+        uses: hendrikmuhs/ccache-action@v1.2
+        with:
+          # Tạo một key duy nhất cho cache dựa trên job và hệ điều hành
+          key: ${{ github.job }}-${{ runner.os }}
+
+      # Bước 3: Cài đặt các gói phần mềm cần thiết cho việc build
+      - name: Install build dependencies
+        run: |
+          sudo apt-get update
+          sudo apt-get install -y --no-install-recommends \
+            build-essential ca-certificates ccache cmake curl git ninja-build python3
+      
+      # Bước 4: Chạy script build chính
+      # Quá trình này rất lâu, nên ta đặt thời gian chờ tối đa là 360 phút (6 tiếng)
+      - name: Run the build script
+        timeout-minutes: 360
+        run: sh build.sh
+
+      # Bước 5: Tải lên sản phẩm cuối cùng (toolchain) làm một "artifact"
+      # Artifact là các file được lưu lại sau khi job hoàn thành
+      - name: Upload build artifact
+        uses: actions/upload-artifact@v4
+        with:
+          # Đặt tên cho artifact để dễ nhận biết
+          name: ollvm-ndk-r23c-toolchain
+          # Đường dẫn đến file cần tải lên (script build.sh sẽ tạo ra file này)
+          path: android-ndk-r23c-obfuscated.tar.xz
+          # Thời gian lưu trữ artifact (mặc định là 90 ngày)
+          retention-days: 7
