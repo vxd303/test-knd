@@ -54,8 +54,8 @@ jobs:
           # Sử dụng manifest tùy chỉnh từ repo patcher để checkout đúng phiên bản
           cp ../patcher/manifest_8481493.xml .repo/manifests/
           repo init -m manifest_8481493.xml
-          repo sync -c -j$(nproc)
-
+          repo sync -c -j$(nproc) --no-clone-bundle --no-tags --depth=1
+          
       # Bước 6: Áp dụng các bản vá OLLVM
       - name: Apply OLLVM patches
         run: |
