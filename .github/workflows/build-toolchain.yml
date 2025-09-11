@@ -43,11 +43,12 @@ jobs:
           # Tạo một thư mục bin cục bộ
           mkdir -p ~/.local/bin
           # Tải script repo mới nhất
-          curl https://storage.googleapis.com/git-repo-downloads/repo > ~/.local/bin/repo
+          curl -L https://raw.githubusercontent.com/android/tools_repo/master/repo > ~/.local/bin/repo
           # Cấp quyền thực thi
           chmod a+x ~/.local/bin/repo
           # Thêm thư mục bin này vào PATH để các bước sau có thể sử dụng
           echo "$HOME/.local/bin" >> $GITHUB_PATH
+          ~/.local/bin/repo --version
 
       # Bước 5: Cấu hình Git cho công cụ 'repo'
       - name: Configure Git for Repo
