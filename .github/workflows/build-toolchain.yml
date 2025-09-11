@@ -65,6 +65,10 @@ jobs:
           cp ../patcher/manifest_8481493.xml .repo/manifests/
           repo init -m manifest_8481493.xml
           cp .repo/repo/repo ~/.local/bin/repo
+          chmod +x ~/.local/bin/repo
+          echo "$HOME/.local/bin" >> $GITHUB_PATH
+          export PATH="$HOME/.local/bin:$PATH"
+          which repo
           repo --version
           # Bây giờ lệnh này sẽ hoạt động vì chúng ta đang dùng repo phiên bản mới
           repo sync -c -j$(nproc) --no-clone-bundle --no-tags --depth=1
