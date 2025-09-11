@@ -5,54 +5,85 @@ name: Build OLLVM NDK Toolchain
 on:
   # Cho phép chạy workflow này một cách thủ công từ giao diện web
   workflow_dispatch:
-
+  
 jobs:
   build:
     # Tên của công việc (job)
-    name: Build OLLVM for NDK r23c
+    name: Build Patched AOSP Toolchain
 
     # Sử dụng máy ảo Ubuntu phiên bản mới nhất do GitHub cung cấp
     runs-on: ubuntu-latest
 
     # Các bước sẽ được thực thi trong job này
     steps:
-      # Bước 1: Tải mã nguồn từ repository của codetronik
-      - name: Checkout OLLVM NDK repository
+      # Bước 1: Tải mã nguồn của repo codetronik/ollvm-ndk
+      # Repo này chứa các file vá OLLVM và file manifest cần thiết
+      - name: Checkout OLLVM NDK Patcher repository
         uses: actions/checkout@v4
         with:
-          # Chỉ định repository cần tải
           repository: codetronik/ollvm-ndk
-          # Chỉ định nhánh (branch) cụ thể là r23c
           ref: r23c
+          # Tải về thư mục .github/workflows/build-toolchain.yml
+          path: patcher
 
-      # Bước 2: Cài đặt và cấu hình ccache để tăng tốc các lần build sau
-      - name: Set up ccache
-        uses: hendrikmuhs/ccache-action@v1.2
-        with:
-          # Tạo một key duy nhất cho cache dựa trên job và hệ điều hành
-          key: ${{ github.job }}-${{ runner.os }}
-
-      # Bước 3: Cài đặt các gói phần mềm cần thiết cho việc build
+      # Bước 2: Cài đặt các gói phần mềm cần thiết cho việc build
       - name: Install build dependencies
         run: |
           sudo apt-get update
           sudo apt-get install -y --no-install-recommends \
-            build-essential ca-certificates ccache cmake curl git ninja-build python3
+            build-essential ca-certificates ccache cmake curl git ninja-build python3 repo bison
       
-      # Bước 4: Chạy script build chính
+      # Bước 3: Cài đặt libffi6 (một thư viện phiên bản cũ cần thiết)
+      - name: Install libffi6 dependency
+        run: |
+          curl -LO http://archive.ubuntu.com/ubuntu/pool/main/libf/libffi/libffi6_3.2.1-8_amd64.deb
+          sudo dpkg -i libffi6_3.2.1-8_amd64.deb
+
+      # Bước 4: Cấu hình Git cho công cụ 'repo'
+      - name: Configure Git for Repo
+        run: |
+          git config --global user.name "GitHub Actions"
+          git config --global user.email "actions@github.com"
+
+      # Bước 5: Tải mã nguồn toolchain gốc của AOSP bằng 'repo'
+      - name: Initialize and Sync AOSP Toolchain Source
+        run: |
+          mkdir aosp_toolchain_src
+          cd aosp_toolchain_src
+          repo init -u https://android.googlesource.com/platform/manifest -b llvm-toolchain
+          # Sử dụng manifest tùy chỉnh từ repo patcher để checkout đúng phiên bản
+          cp ../patcher/manifest_8481493.xml .repo/manifests/
+          repo init -m manifest_8481493.xml
+          repo sync -c -j$(nproc)
+
+      # Bước 6: Áp dụng các bản vá OLLVM
+      - name: Apply OLLVM patches
+        run: |
+          # Copy và ghi đè thư mục /llvm từ repo patcher vào mã nguồn toolchain
+          cp -rf patcher/llvm aosp_toolchain_src/toolchain/llvm-project/
+
+      # Bước 7: Chạy script build chính
       # Quá trình này rất lâu, nên ta đặt thời gian chờ tối đa là 360 phút (6 tiếng)
       - name: Run the build script
         timeout-minutes: 360
-        run: sh build.sh
+        working-directory: ./aosp_toolchain_src
+        run: python3 toolchain/llvm_android/build.py --no-build=windows --skip-package --skip-runtimes
 
-      # Bước 5: Tải lên sản phẩm cuối cùng (toolchain) làm một "artifact"
-      # Artifact là các file được lưu lại sau khi job hoàn thành
+      # Bước 8: Đóng gói toolchain đã build thành công
+      - name: Package the toolchain
+        run: |
+          # Di chuyển vào thư mục chứa kết quả và nén lại
+          cd aosp_toolchain_src/out/install/linux-x86
+          tar -cJf ../../../toolchain.tar.xz .
+
+      # Bước 9: Tải lên sản phẩm cuối cùng (toolchain) làm một "artifact"
       - name: Upload build artifact
         uses: actions/upload-artifact@v4
         with:
           # Đặt tên cho artifact để dễ nhận biết
-          name: ollvm-ndk-r23c-toolchain
-          # Đường dẫn đến file cần tải lên (script build.sh sẽ tạo ra file này)
-          path: android-ndk-r23c-obfuscated.tar.xz
+          name: patched-aosp-toolchain
+          # Đường dẫn đến file cần tải lên
+          path: aosp_toolchain_src/toolchain.tar.xz
           # Thời gian lưu trữ artifact (mặc định là 90 ngày)
           retention-days: 7
+
