@@ -30,10 +30,10 @@ jobs:
       - name: Install latest repo launcher (v2.58)
         run: |
           mkdir -p ~/.local/bin
-          curl -s "https://gerrit.googlesource.com/git-repo/+/refs/tags/v2.58?format=TEXT" | base64 -d > ~/.local/bin/repo
+          git clone --depth=1 --branch=v2.58 https://gerrit.googlesource.com/git-repo repo-launcher
+          cp repo-launcher/repo ~/.local/bin/repo
           chmod +x ~/.local/bin/repo
           echo "$HOME/.local/bin" >> $GITHUB_PATH
-          export PATH="$HOME/.local/bin:$PATH"
           repo --version
 
       - name: Configure Git for Repo
