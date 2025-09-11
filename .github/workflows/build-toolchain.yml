@@ -5,7 +5,7 @@ name: Build OLLVM NDK Toolchain
 on:
   # Cho phép chạy workflow này một cách thủ công từ giao diện web
   workflow_dispatch:
-  
+
 jobs:
   build:
     # Tên của công việc (job)
@@ -17,13 +17,11 @@ jobs:
     # Các bước sẽ được thực thi trong job này
     steps:
       # Bước 1: Tải mã nguồn của repo codetronik/ollvm-ndk
-      # Repo này chứa các file vá OLLVM và file manifest cần thiết
       - name: Checkout OLLVM NDK Patcher repository
         uses: actions/checkout@v4
         with:
           repository: codetronik/ollvm-ndk
           ref: r23c
-          # Tải về thư mục .github/workflows/build-toolchain.yml
           path: patcher
 
       # Bước 2: Cài đặt các gói phần mềm cần thiết cho việc build
@@ -31,7 +29,7 @@ jobs:
         run: |
           sudo apt-get update
           sudo apt-get install -y --no-install-recommends \
-            build-essential ca-certificates ccache cmake curl git ninja-build python3 repo bison
+            build-essential ca-certificates ccache cmake curl git ninja-build python3 bison
       
       # Bước 3: Cài đặt libffi6 (một thư viện phiên bản cũ cần thiết)
       - name: Install libffi6 dependency
@@ -39,51 +37,57 @@ jobs:
           curl -LO http://archive.ubuntu.com/ubuntu/pool/main/libf/libffi/libffi6_3.2.1-8_amd64.deb
           sudo dpkg -i libffi6_3.2.1-8_amd64.deb
 
-      # Bước 4: Cấu hình Git cho công cụ 'repo'
+      # Bước 4: Cài đặt thủ công phiên bản 'repo' mới nhất
+      - name: Install latest repo tool
+        run: |
+          # Tạo một thư mục bin cục bộ
+          mkdir -p ~/.local/bin
+          # Tải script repo mới nhất
+          curl https://storage.googleapis.com/git-repo-downloads/repo > ~/.local/bin/repo
+          # Cấp quyền thực thi
+          chmod a+x ~/.local/bin/repo
+          # Thêm thư mục bin này vào PATH để các bước sau có thể sử dụng
+          echo "$HOME/.local/bin" >> $GITHUB_PATH
+
+      # Bước 5: Cấu hình Git cho công cụ 'repo'
       - name: Configure Git for Repo
         run: |
           git config --global user.name "GitHub Actions"
           git config --global user.email "actions@github.com"
 
-      # Bước 5: Tải mã nguồn toolchain gốc của AOSP bằng 'repo'
+      # Bước 6: Tải mã nguồn toolchain gốc của AOSP bằng 'repo'
       - name: Initialize and Sync AOSP Toolchain Source
         run: |
           mkdir aosp_toolchain_src
           cd aosp_toolchain_src
           repo init -u https://android.googlesource.com/platform/manifest -b llvm-toolchain
-          # Sử dụng manifest tùy chỉnh từ repo patcher để checkout đúng phiên bản
           cp ../patcher/manifest_8481493.xml .repo/manifests/
           repo init -m manifest_8481493.xml
-          repo sync -c -j$(nproc) --no-clone-bundle --no-tags
-          
-      # Bước 6: Áp dụng các bản vá OLLVM
+          # Bây giờ lệnh này sẽ hoạt động vì chúng ta đang dùng repo phiên bản mới
+          repo sync -c -j$(nproc) --no-clone-bundle --no-tags --depth=1
+
+      # Bước 7: Áp dụng các bản vá OLLVM
       - name: Apply OLLVM patches
         run: |
-          # Copy và ghi đè thư mục /llvm từ repo patcher vào mã nguồn toolchain
           cp -rf patcher/llvm aosp_toolchain_src/toolchain/llvm-project/
 
-      # Bước 7: Chạy script build chính
-      # Quá trình này rất lâu, nên ta đặt thời gian chờ tối đa là 360 phút (6 tiếng)
+      # Bước 8: Chạy script build chính
       - name: Run the build script
         timeout-minutes: 360
         working-directory: ./aosp_toolchain_src
         run: python3 toolchain/llvm_android/build.py --no-build=windows --skip-package --skip-runtimes
 
-      # Bước 8: Đóng gói toolchain đã build thành công
+      # Bước 9: Đóng gói toolchain đã build thành công
       - name: Package the toolchain
         run: |
-          # Di chuyển vào thư mục chứa kết quả và nén lại
           cd aosp_toolchain_src/out/install/linux-x86
           tar -cJf ../../../toolchain.tar.xz .
 
-      # Bước 9: Tải lên sản phẩm cuối cùng (toolchain) làm một "artifact"
+      # Bước 10: Tải lên sản phẩm cuối cùng (toolchain) làm một "artifact"
       - name: Upload build artifact
         uses: actions/upload-artifact@v4
         with:
-          # Đặt tên cho artifact để dễ nhận biết
           name: patched-aosp-toolchain
-          # Đường dẫn đến file cần tải lên
           path: aosp_toolchain_src/toolchain.tar.xz
-          # Thời gian lưu trữ artifact (mặc định là 90 ngày)
           retention-days: 7
 
