@@ -16,6 +16,7 @@ jobs:
       BUILD_DIR: ${{ github.workspace }}/build
       CLANG_TGZ_URL: https://android.googlesource.com/platform/prebuilts/clang/host/linux-x86/+archive/4d52068718fb7940b103cc49506f77e5d22f25df/clang-r450784d1.tar.gz
       CLANG_DIR: ${{ github.workspace }}/clang-r450784d1
+      LLVM_HOME: ${{ github.workspace }}/clang-r450784d1   # <<< THÊM DÒNG NÀY
 
     steps:
       - name: Checkout (your repo, not strictly required)
