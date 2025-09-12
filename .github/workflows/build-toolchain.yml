@@ -34,33 +34,36 @@ jobs:
           cp repo-launcher/repo ~/.local/bin/repo
           chmod +x ~/.local/bin/repo
           echo "$HOME/.local/bin" >> $GITHUB_PATH
-          ~/.local/bin/repo --version
+          export PATH="$HOME/.local/bin:$PATH"
+          repo --version
 
       - name: Configure Git for Repo
         run: |
           git config --global user.name "GitHub Actions"
           git config --global user.email "actions@github.com"
 
+      - name: Clean old source directory if exists
+        run: |
+          rm -rf aosp_toolchain_src
+
       - name: Initialize and Sync AOSP Toolchain Source
+        env:
+          REPO_ALLOW_SHALLOW: "1"
         run: |
           mkdir aosp_toolchain_src
           cd aosp_toolchain_src
 
-          # B1. Init repo
-          repo init -u https://android.googlesource.com/platform/manifest -b llvm-toolchain
+          # Init repo with depth=1
+          repo init --depth=1 -u https://android.googlesource.com/platform/manifest -b llvm-toolchain
 
-          # B2. Ghi đè repo core bằng repo launcher đã cập nhật
-          cp ~/.local/bin/repo .repo/repo/repo
-          chmod +x .repo/repo/repo
-
-          # B3. Dùng manifest tùy chỉnh
+          # Use custom manifest
           cp ../patcher/manifest_8481493.xml .repo/manifests/
-          repo init -m manifest_8481493.xml
+          repo init --depth=1 -m manifest_8481493.xml
 
-          # B4. In phiên bản repo core
+          # Check version
           .repo/repo/repo --version
 
-          # B5. Đồng bộ source với depth=1
+          # Sync
           repo sync -c -j$(nproc) --no-clone-bundle --no-tags --depth=1
 
       - name: Apply OLLVM patches
