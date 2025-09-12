@@ -11,10 +11,8 @@ jobs:
     runs-on: ubuntu-22.04  # glibc ~ 2.35
 
     env:
-      # Nếu build từ repo plugin bên ngoài (ví dụ tutorial):
       REPO_URL: https://github.com/LeadroyaL/llvm-pass-tutorial
       REPO_DIR: ${{ github.workspace }}/llvm-pass-tutorial
-      # Nếu plugin ở repo hiện tại, có thể đặt: REPO_DIR: ${{ github.workspace }}
       BUILD_DIR: ${{ github.workspace }}/build
       LLVM_HOME: /usr/lib/llvm-14
 
@@ -30,27 +28,37 @@ jobs:
 
       - name: Clone plugin source (optional if external)
         run: |
-          # Nếu plugin ở repo hiện tại, bỏ qua bước này và chỉnh REPO_DIR cho phù hợp
           git clone --depth=1 "$REPO_URL" "$REPO_DIR"
           ls -lah "$REPO_DIR"
 
-      # ✅ Patch: bỏ ép -stdlib=libc++ và include 'c++/v1' (nếu có) mà không dùng pipeline
+      # ✅ Patch an toàn: chỉ sửa khi có file hợp lệ
       - name: Patch plugin CMake to use libstdc++ (remove libc++)
         shell: bash
         run: |
           set -euo pipefail
-          # 1) Gỡ '-stdlib=libc++'
+          # 1) Gỡ '-stdlib=libc++' nếu có
           mapfile -t libcxx_files < <(grep -RIl -- '-stdlib=libc++' "$REPO_DIR" || true)
-          for f in "${libcxx_files[@]:-}"; do
-            echo "Patching -stdlib=libc++ in $f"
-            sed -i 's/-stdlib=libc++//g' "$f"
-          done
-          # 2) Gỡ include thủ công tới 'c++/v1'
+          if (( ${#libcxx_files[@]} )); then
+            for f in "${libcxx_files[@]}"; do
+              [[ -f "$f" ]] || continue
+              echo "Patching -stdlib=libc++ in $f"
+              sed -i 's/-stdlib=libc++//g' "$f"
+            done
+          else
+            echo "No files contain -stdlib=libc++"
+          fi
+
+          # 2) Gỡ mọi include thủ công tới 'c++/v1' (nếu có)
           mapfile -t v1_files < <(grep -RIl -- 'c++/v1' "$REPO_DIR" || true)
-          for f in "${v1_files[@]:-}"; do
-            echo "Removing c++/v1 include in $f"
-            sed -i '/c++\/v1/d' "$f"
-          done
+          if (( ${#v1_files[@]} )); then
+            for f in "${v1_files[@]}"; do
+              [[ -f "$f" ]] || continue
+              echo "Removing c++/v1 include in $f"
+              sed -i '/c++\/v1/d' "$f"
+            done
+          else
+            echo "No files contain c++/v1 includes"
+          fi
 
       - name: Configure (CMake)
         run: |
