@@ -8,16 +8,16 @@ on:
 
 jobs:
   build:
-    runs-on: ubuntu-latest
+    runs-on: ubuntu-22.04
 
     env:
-      REPO_URL: https://github.com/vxd303/pass-tutorial
-      REPO_DIR: ${{ github.workspace }}/pass-tutorial
+      REPO_URL: https://github.com/LeadroyaL/llvm-pass-tutorial
+      REPO_DIR: ${{ github.workspace }}/llvm-pass-tutorial
       BUILD_DIR: ${{ github.workspace }}/build
       # Pin commit để giảm lỗi Gitiles; vẫn có thể thỉnh thoảng lỗi 5xx
-      CLANG_TGZ_URL: https://android.googlesource.com/platform/prebuilts/clang/host/linux-x86/+archive/219e6aaa8fecc0ab0df4e691a9645ba778267af2/clang-r416183b1.tar.gz
-      CLANG_DIR: ${{ github.workspace }}/clang-r416183b1
-      LLVM_HOME: ${{ github.workspace }}/clang-r416183b1
+      CLANG_TGZ_URL: https://android.googlesource.com/platform/prebuilts/clang/host/linux-x86/+archive/4d52068718fb7940b103cc49506f77e5d22f25df/clang-r450784d1.tar.gz
+      CLANG_DIR: ${{ github.workspace }}/clang-r450784d1
+      LLVM_HOME: ${{ github.workspace }}/clang-r450784d1
 
     steps:
       - name: Checkout (your repo, not strictly required)
@@ -27,19 +27,16 @@ jobs:
         run: |
           sudo apt-get update
           sudo apt-get install -y ninja-build cmake git
-
       - name: Clone llvm-pass-tutorial
         run: |
           git clone --depth=1 "$REPO_URL" "$REPO_DIR"
           ls -lah "$REPO_DIR"
-
       - name: Download full prebuilt Clang (clang-r450784d1)
         run: |
           mkdir -p "$CLANG_DIR"
           curl -fL "$CLANG_TGZ_URL" -o clang.tar.gz
           tar -xzf clang.tar.gz -C "$CLANG_DIR"
           "$CLANG_DIR/bin/clang++" --version
-
       - name: Patch LLVMExports.cmake (downgrade FATAL_ERROR → WARNING)
         env:
           LLVM_CMAKE_DIR: ${{ env.CLANG_DIR }}/lib64/cmake/llvm
@@ -49,7 +46,6 @@ jobs:
           for f in "$LLVM_CMAKE_DIR"/*Exports*.cmake; do
             [ -f "$f" ] && sed -i 's/message(FATAL_ERROR/message(WARNING/g' "$f"
           done
-
       - name: Configure
         run: |
           # (tuỳ chọn) cho clang vào PATH, và repo demo thích có LLVM_HOME
@@ -61,13 +57,11 @@ jobs:
             -DCMAKE_C_COMPILER="$CLANG_DIR/bin/clang" \
             -DCMAKE_CXX_COMPILER="$CLANG_DIR/bin/clang++" \
             -DCMAKE_BUILD_TYPE=Release
-
       - name: Build
         run: |
           cmake --build "$BUILD_DIR" -v
           echo "Built .so files:"
           find "$BUILD_DIR" -name "*.so" -maxdepth 3 -print
-
       - name: Upload .so artifact
         uses: actions/upload-artifact@v4
         with:
