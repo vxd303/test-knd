@@ -14,7 +14,7 @@ jobs:
       REPO_URL: https://github.com/LeadroyaL/llvm-pass-tutorial
       REPO_DIR: ${{ github.workspace }}/llvm-pass-tutorial
       BUILD_DIR: ${{ github.workspace }}/build
-      CLANG_TGZ_URL: https://android.googlesource.com/platform/prebuilts/clang/host/linux-x86/+archive/refs/heads/master/clang-r450784d1.tar.gz
+      CLANG_TGZ_URL: https://android.googlesource.com/platform/prebuilts/clang/host/linux-x86/+archive/4d52068718fb7940b103cc49506f77e5d22f25df/clang-r450784d1/lib64.tar.gz
       CLANG_DIR: ${{ github.workspace }}/clang-r450784d1
 
     steps:
