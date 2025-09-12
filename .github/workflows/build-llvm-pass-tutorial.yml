@@ -1,71 +1,73 @@
-name: Build llvm-pass-tutorial (.so)
+name: Rebuild LLVM Pass plugin for host (glibc 2.35)
 
 on:
+  workflow_dispatch:
   push:
     branches: [ main, master ]
   pull_request:
-  workflow_dispatch:
 
 jobs:
   build:
+    # Pin Ubuntu 22.04 để glibc ~ 2.35 (khớp đa số máy/WSL hiện tại)
     runs-on: ubuntu-22.04
 
     env:
+      # 1) Nếu bạn build từ repo khác:
       REPO_URL: https://github.com/LeadroyaL/llvm-pass-tutorial
       REPO_DIR: ${{ github.workspace }}/llvm-pass-tutorial
+      # 2) Nếu plugin nằm ngay repo hiện tại, đặt:
+      # REPO_DIR: ${{ github.workspace }}
       BUILD_DIR: ${{ github.workspace }}/build
-      # Pin commit để giảm lỗi Gitiles; vẫn có thể thỉnh thoảng lỗi 5xx
-      CLANG_TGZ_URL: https://android.googlesource.com/platform/prebuilts/clang/host/linux-x86/+archive/4d52068718fb7940b103cc49506f77e5d22f25df/clang-r450784d1.tar.gz
-      CLANG_DIR: ${{ github.workspace }}/clang-r450784d1
-      LLVM_HOME: ${{ github.workspace }}/clang-r450784d1
+      LLVM_HOME: /usr/lib/llvm-14
 
     steps:
-      - name: Checkout (your repo, not strictly required)
+      - name: Checkout (this repo)
         uses: actions/checkout@v4
 
-      - name: Install deps
+      - name: Install toolchain (LLVM/Clang 14)
         run: |
           sudo apt-get update
-          sudo apt-get install -y ninja-build cmake git
-      - name: Clone llvm-pass-tutorial
+          sudo apt-get install -y llvm-14-dev clang-14 lld-14 cmake ninja-build git
+
+      - name: Clone plugin source (optional if external)
         run: |
+          # Nếu plugin ở repo hiện tại, bỏ qua bước này và set REPO_DIR cho phù hợp
           git clone --depth=1 "$REPO_URL" "$REPO_DIR"
           ls -lah "$REPO_DIR"
-      - name: Download full prebuilt Clang (clang-r450784d1)
+
+      - name: Configure (CMake)
         run: |
-          mkdir -p "$CLANG_DIR"
-          curl -fL "$CLANG_TGZ_URL" -o clang.tar.gz
-          tar -xzf clang.tar.gz -C "$CLANG_DIR"
-          "$CLANG_DIR/bin/clang++" --version
-      - name: Patch LLVMExports.cmake (downgrade FATAL_ERROR → WARNING)
-        env:
-          LLVM_CMAKE_DIR: ${{ env.CLANG_DIR }}/lib64/cmake/llvm
-        run: |
-          set -eux
-          # Đổi mọi message(FATAL_ERROR ...) -> message(WARNING ...)
-          for f in "$LLVM_CMAKE_DIR"/*Exports*.cmake; do
-            [ -f "$f" ] && sed -i 's/message(FATAL_ERROR/message(WARNING/g' "$f"
-          done
-      - name: Configure
-        run: |
-          # (tuỳ chọn) cho clang vào PATH, và repo demo thích có LLVM_HOME
-          export PATH="$LLVM_HOME/bin:$PATH"
           cmake -S "$REPO_DIR" -B "$BUILD_DIR" -G Ninja \
-            -DLLVM_DIR="$CLANG_DIR/lib64/cmake/llvm" \
-            -DClang_DIR="$CLANG_DIR/lib64/cmake/clang" \
+            -DLLVM_DIR="$LLVM_HOME/lib/cmake/llvm" \
+            -DClang_DIR="$LLVM_HOME/lib/cmake/clang" \
             -DLLVM_LINK_LLVM_DYLIB=ON \
-            -DCMAKE_C_COMPILER="$CLANG_DIR/bin/clang" \
-            -DCMAKE_CXX_COMPILER="$CLANG_DIR/bin/clang++" \
-            -DCMAKE_BUILD_TYPE=Release
+            -DCMAKE_BUILD_TYPE=Release \
+            -DCMAKE_C_COMPILER=clang-14 \
+            -DCMAKE_CXX_COMPILER=clang++-14 \
+            -DCMAKE_POSITION_INDEPENDENT_CODE=ON \
+            -DCMAKE_SHARED_LINKER_FLAGS="-static-libstdc++ -static-libgcc"
+
       - name: Build
         run: |
           cmake --build "$BUILD_DIR" -v
           echo "Built .so files:"
-          find "$BUILD_DIR" -name "*.so" -maxdepth 3 -print
-      - name: Upload .so artifact
+          find "$BUILD_DIR" -name "*.so" -maxdepth 4 -print
+
+      - name: Verify host deps (no libc++/libc++abi; glibc <= 2.35)
+        run: |
+          SO=$(find "$BUILD_DIR" -name "*.so" -maxdepth 4 | head -n1 || true)
+          if [ -z "$SO" ]; then
+            echo "No .so produced"; exit 1
+          fi
+          echo "Checking: $SO"
+          ldd "$SO" || true
+          echo "Required GLIBC versions inside .so:"
+          strings -a "$SO" | grep -o 'GLIBC_[0-9.]*' | sort -V | uniq | tail -n5 || true
+
+      - name: Upload artifact (.so)
         uses: actions/upload-artifact@v4
         with:
-          name: llvm-pass-tutorial-so
+          name: host-plugin-so
           path: |
             ${{ env.BUILD_DIR }}/*.so
             ${{ env.BUILD_DIR }}/**/*.so
