@@ -8,15 +8,14 @@ on:
 
 jobs:
   build:
-    # Pin Ubuntu 22.04 để glibc ~ 2.35 (khớp đa số máy/WSL hiện tại)
+    # Pin 22.04 để glibc ~ 2.35 (ổn định với đa số máy/WSL)
     runs-on: ubuntu-22.04
 
     env:
-      # 1) Nếu bạn build từ repo khác:
+      # Nếu build từ repo plugin bên ngoài (ví dụ tutorial):
       REPO_URL: https://github.com/LeadroyaL/llvm-pass-tutorial
       REPO_DIR: ${{ github.workspace }}/llvm-pass-tutorial
-      # 2) Nếu plugin nằm ngay repo hiện tại, đặt:
-      # REPO_DIR: ${{ github.workspace }}
+      # Nếu plugin nằm ngay repo hiện tại, có thể đặt: REPO_DIR: ${{ github.workspace }}
       BUILD_DIR: ${{ github.workspace }}/build
       LLVM_HOME: /usr/lib/llvm-14
 
@@ -24,16 +23,30 @@ jobs:
       - name: Checkout (this repo)
         uses: actions/checkout@v4
 
-      - name: Install toolchain (LLVM/Clang 14)
+      - name: Install toolchain & deps (LLVM/Clang 14 + libunwind)
         run: |
           sudo apt-get update
-          sudo apt-get install -y llvm-14-dev clang-14 lld-14 cmake ninja-build git libunwind-dev
+          sudo apt-get install -y \
+            llvm-14-dev clang-14 lld-14 cmake ninja-build git libunwind-dev
 
       - name: Clone plugin source (optional if external)
         run: |
-          # Nếu plugin ở repo hiện tại, bỏ qua bước này và set REPO_DIR cho phù hợp
+          # Nếu plugin đã ở repo hiện tại, bỏ qua bước này và set REPO_DIR tương ứng
           git clone --depth=1 "$REPO_URL" "$REPO_DIR"
           ls -lah "$REPO_DIR"
+
+      # Patch để dùng libstdc++ thay vì libc++ (tránh thiếu libc++/c++abi khi load plugin)
+      - name: Patch plugin CMake to remove libc++ forcing
+        run: |
+          set -eux
+          # Bỏ mọi flag '-stdlib=libc++'
+          if grep -R --line-number -- '-stdlib=libc\+\+' "$REPO_DIR"; then
+            sed -i 's/-stdlib=libc++//g' $(grep -R --null --files-with-matches '-stdlib=libc++' "$REPO_DIR")
+          fi
+          # Loại bỏ include thủ công tới c++/v1 nếu repo có chèn
+          if grep -R --line-number 'c\+\+/v1' "$REPO_DIR"; then
+            sed -i '/c++\/v1/d' $(grep -R --null --files-with-matches 'c++/v1' "$REPO_DIR")
+          fi
 
       - name: Configure (CMake)
         run: |
@@ -45,6 +58,8 @@ jobs:
             -DCMAKE_C_COMPILER=clang-14 \
             -DCMAKE_CXX_COMPILER=clang++-14 \
             -DCMAKE_POSITION_INDEPENDENT_CODE=ON \
+            -DCMAKE_CXX_STANDARD=17 \
+            -DCMAKE_CXX_FLAGS="" \
             -DCMAKE_SHARED_LINKER_FLAGS="-Wl,-Bstatic -lunwind -static-libstdc++ -static-libgcc -Wl,-Bdynamic"
 
       - name: Build
@@ -53,7 +68,7 @@ jobs:
           echo "Built .so files:"
           find "$BUILD_DIR" -name "*.so" -maxdepth 4 -print
 
-      - name: Verify host deps (no libc++/libc++abi; glibc <= 2.35)
+      - name: Verify host deps
         run: |
           SO=$(find "$BUILD_DIR" -name "*.so" -maxdepth 4 | head -n1 || true)
           if [ -z "$SO" ]; then
