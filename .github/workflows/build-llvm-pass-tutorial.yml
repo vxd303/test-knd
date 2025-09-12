@@ -8,14 +8,13 @@ on:
 
 jobs:
   build:
-    # Pin 22.04 để glibc ~ 2.35 (ổn định với đa số máy/WSL)
-    runs-on: ubuntu-22.04
+    runs-on: ubuntu-22.04  # glibc ~ 2.35
 
     env:
       # Nếu build từ repo plugin bên ngoài (ví dụ tutorial):
       REPO_URL: https://github.com/LeadroyaL/llvm-pass-tutorial
       REPO_DIR: ${{ github.workspace }}/llvm-pass-tutorial
-      # Nếu plugin nằm ngay repo hiện tại, có thể đặt: REPO_DIR: ${{ github.workspace }}
+      # Nếu plugin ở repo hiện tại, đặt: REPO_DIR: ${{ github.workspace }}
       BUILD_DIR: ${{ github.workspace }}/build
       LLVM_HOME: /usr/lib/llvm-14
 
@@ -31,22 +30,22 @@ jobs:
 
       - name: Clone plugin source (optional if external)
         run: |
-          # Nếu plugin đã ở repo hiện tại, bỏ qua bước này và set REPO_DIR tương ứng
+          # Nếu plugin ở repo hiện tại, bỏ qua bước này và chỉnh REPO_DIR cho phù hợp
           git clone --depth=1 "$REPO_URL" "$REPO_DIR"
           ls -lah "$REPO_DIR"
 
-      # Patch để dùng libstdc++ thay vì libc++ (tránh thiếu libc++/c++abi khi load plugin)
-      - name: Patch plugin CMake to remove libc++ forcing
+      # ✅ Patch: bỏ ép -stdlib=libc++ và include 'c++/v1' (nếu có)
+      - name: Patch plugin CMake to use libstdc++ (remove libc++)
+        shell: bash
         run: |
-          set -eux
-          # Bỏ mọi flag '-stdlib=libc++'
-          if grep -R --line-number -- '-stdlib=libc\+\+' "$REPO_DIR"; then
-            sed -i 's/-stdlib=libc++//g' $(grep -R --null --files-with-matches '-stdlib=libc++' "$REPO_DIR")
-          fi
-          # Loại bỏ include thủ công tới c++/v1 nếu repo có chèn
-          if grep -R --line-number 'c\+\+/v1' "$REPO_DIR"; then
-            sed -i '/c++\/v1/d' $(grep -R --null --files-with-matches 'c++/v1' "$REPO_DIR")
-          fi
+          set -euo pipefail
+          # Tìm & gỡ '-stdlib=libc++' an toàn (pattern bắt đầu bằng '-': dùng '--' để chặn option)
+          grep -RIlZ -- '-stdlib=libc++' "$REPO_DIR" || true
+          grep -RIlZ -- '-stdlib=libc++' "$REPO_DIR" | xargs -0 -r sed -i 's/-stdlib=libc++//g'
+
+          # Gỡ mọi include thủ công tới 'c++/v1' nếu repo có chèn đường dẫn này
+          grep -RIlZ -- 'c++/v1' "$REPO_DIR" || true
+          grep -RIlZ -- 'c++/v1' "$REPO_DIR" | xargs -0 -r sed -i '/c++\/v1/d'
 
       - name: Configure (CMake)
         run: |
