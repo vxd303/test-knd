@@ -1,0 +1,72 @@
+name: Build llvm-pass-tutorial (.so)
+
+on:
+  push:
+    branches: [ main, master ]
+  pull_request:
+  workflow_dispatch:
+
+jobs:
+  build:
+    runs-on: ubuntu-latest
+
+    env:
+      REPO_URL: https://github.com/LeadroyaL/llvm-pass-tutorial
+      REPO_DIR: ${{ github.workspace }}/llvm-pass-tutorial
+      BUILD_DIR: ${{ github.workspace }}/build
+      CLANG_TGZ_URL: https://android.googlesource.com/platform/prebuilts/clang/host/linux-x86/+archive/refs/heads/master/clang-r450784d1.tar.gz
+      CLANG_DIR: ${{ github.workspace }}/clang-r450784d1
+
+    steps:
+      - name: Checkout (your repo, not strictly required)
+        uses: actions/checkout@v4
+
+      - name: Install deps
+        run: |
+          sudo apt-get update
+          sudo apt-get install -y ninja-build cmake git
+
+      - name: Clone llvm-pass-tutorial
+        run: |
+          git clone --depth=1 "$REPO_URL" "$REPO_DIR"
+          ls -lah "$REPO_DIR"
+
+      - name: Download full prebuilt Clang (clang-r450784d1)
+        run: |
+          mkdir -p "$CLANG_DIR"
+          curl -sSL "$CLANG_TGZ_URL" -o clang.tar.gz
+          tar -xzf clang.tar.gz -C "$CLANG_DIR"
+          "$CLANG_DIR/bin/clang++" --version
+
+      # 如果遇到 find_package 解析预编译导出的问题，再启用下面的补丁步骤（默认注释）
+      # - name: (Optional) Patch LLVMExports.cmake
+      #   run: |
+      #     EXPORTS="$CLANG_DIR/lib64/cmake/llvm/LLVMExports.cmake"
+      #     if [ -f "$EXPORTS" ]; then
+      #       echo "Patching $EXPORTS"
+      #       sed -i 's/^\(.*IMPORTED_LOCATION.*LLVM.*\.a.*\)$/# \1/' "$EXPORTS" || true
+      #     fi
+
+      - name: Configure
+        run: |
+          cmake -S "$REPO_DIR" -B "$BUILD_DIR" -G Ninja \
+            -DLLVM_DIR="$CLANG_DIR/lib64/cmake/llvm" \
+            -DClang_DIR="$CLANG_DIR/lib64/cmake/clang" \
+            -DCMAKE_C_COMPILER="$CLANG_DIR/bin/clang" \
+            -DCMAKE_CXX_COMPILER="$CLANG_DIR/bin/clang++" \
+            -DCMAKE_BUILD_TYPE=Release
+
+      - name: Build
+        run: |
+          cmake --build "$BUILD_DIR" -v
+          echo "Built .so files:"
+          find "$BUILD_DIR" -name "*.so" -maxdepth 3 -print
+
+      - name: Upload .so artifact
+        uses: actions/upload-artifact@v4
+        with:
+          name: llvm-pass-tutorial-so
+          path: |
+            ${{ env.BUILD_DIR }}/*.so
+            ${{ env.BUILD_DIR }}/**/*.so
+          if-no-files-found: error
