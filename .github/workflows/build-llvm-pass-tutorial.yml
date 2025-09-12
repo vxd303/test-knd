@@ -14,7 +14,7 @@ jobs:
       # Nếu build từ repo plugin bên ngoài (ví dụ tutorial):
       REPO_URL: https://github.com/LeadroyaL/llvm-pass-tutorial
       REPO_DIR: ${{ github.workspace }}/llvm-pass-tutorial
-      # Nếu plugin ở repo hiện tại, đặt: REPO_DIR: ${{ github.workspace }}
+      # Nếu plugin ở repo hiện tại, có thể đặt: REPO_DIR: ${{ github.workspace }}
       BUILD_DIR: ${{ github.workspace }}/build
       LLVM_HOME: /usr/lib/llvm-14
 
@@ -34,18 +34,23 @@ jobs:
           git clone --depth=1 "$REPO_URL" "$REPO_DIR"
           ls -lah "$REPO_DIR"
 
-      # ✅ Patch: bỏ ép -stdlib=libc++ và include 'c++/v1' (nếu có)
+      # ✅ Patch: bỏ ép -stdlib=libc++ và include 'c++/v1' (nếu có) mà không dùng pipeline
       - name: Patch plugin CMake to use libstdc++ (remove libc++)
         shell: bash
         run: |
           set -euo pipefail
-          # Tìm & gỡ '-stdlib=libc++' an toàn (pattern bắt đầu bằng '-': dùng '--' để chặn option)
-          grep -RIlZ -- '-stdlib=libc++' "$REPO_DIR" || true
-          grep -RIlZ -- '-stdlib=libc++' "$REPO_DIR" | xargs -0 -r sed -i 's/-stdlib=libc++//g'
-
-          # Gỡ mọi include thủ công tới 'c++/v1' nếu repo có chèn đường dẫn này
-          grep -RIlZ -- 'c++/v1' "$REPO_DIR" || true
-          grep -RIlZ -- 'c++/v1' "$REPO_DIR" | xargs -0 -r sed -i '/c++\/v1/d'
+          # 1) Gỡ '-stdlib=libc++'
+          mapfile -t libcxx_files < <(grep -RIl -- '-stdlib=libc++' "$REPO_DIR" || true)
+          for f in "${libcxx_files[@]:-}"; do
+            echo "Patching -stdlib=libc++ in $f"
+            sed -i 's/-stdlib=libc++//g' "$f"
+          done
+          # 2) Gỡ include thủ công tới 'c++/v1'
+          mapfile -t v1_files < <(grep -RIl -- 'c++/v1' "$REPO_DIR" || true)
+          for f in "${v1_files[@]:-}"; do
+            echo "Removing c++/v1 include in $f"
+            sed -i '/c++\/v1/d' "$f"
+          done
 
       - name: Configure (CMake)
         run: |
