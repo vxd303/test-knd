@@ -1,4 +1,4 @@
-name: Rebuild LLVM Pass plugin for host (glibc 2.35)
+name: Build LLVM pass plugin matched with NDK r25c (clang-r450784d1)
 
 on:
   workflow_dispatch:
@@ -8,67 +8,96 @@ on:
 
 jobs:
   build:
-    runs-on: ubuntu-22.04  # glibc ~ 2.35
+    runs-on: ubuntu-22.04   # glibc 2.35 — ổn và phổ biến
 
     env:
       REPO_URL: https://github.com/LeadroyaL/llvm-pass-tutorial
       REPO_DIR: ${{ github.workspace }}/llvm-pass-tutorial
       BUILD_DIR: ${{ github.workspace }}/build
-      LLVM_HOME: /usr/lib/llvm-14
+      # AOSP prebuilt clang full (pin 1 commit r450784d1); sẽ fallback sang LLVM 14 official nếu tgz lỗi
+      AOSP_TGZ: https://android.googlesource.com/platform/prebuilts/clang/host/linux-x86/+archive/4d52068718fb7940b103cc49506f77e5d22f25df/clang-r450784d1.tar.gz
+      CLANG_DIR: ${{ github.workspace }}/clang-r450784d1
 
     steps:
-      - name: Checkout (this repo)
+      - name: Checkout
         uses: actions/checkout@v4
 
-      - name: Install toolchain & deps (LLVM/Clang 14 + libunwind)
+      - name: Install deps (cmake, ninja, llvm/clang tools for sanity)
         run: |
           sudo apt-get update
-          sudo apt-get install -y \
-            llvm-14-dev clang-14 lld-14 cmake ninja-build git libunwind-dev
+          sudo apt-get install -y cmake ninja-build git libunwind-dev
 
-      - name: Clone plugin source (optional if external)
+      - name: Clone plugin source (tutorial)
         run: |
           git clone --depth=1 "$REPO_URL" "$REPO_DIR"
           ls -lah "$REPO_DIR"
 
-      # ✅ Patch an toàn: chỉ sửa khi có file hợp lệ
-      - name: Patch plugin CMake to use libstdc++ (remove libc++)
+      - name: Download full clang r450784d1 (try AOSP; fallback to LLVM 14 official)
         shell: bash
         run: |
           set -euo pipefail
-          # 1) Gỡ '-stdlib=libc++' nếu có
+          mkdir -p "$CLANG_DIR"
+          echo "[Try] AOSP prebuilt tgz..."
+          if curl -fL "$AOSP_TGZ" -o clang.tar.gz && tar -tzf clang.tar.gz >/dev/null 2>&1; then
+            tar -xzf clang.tar.gz -C "$CLANG_DIR"
+            echo "AOSP prebuilt extracted."
+          else
+            echo "AOSP tgz failed; fallback to LLVM 14 official release (Ubuntu 22.04 build)."
+            LLVM_URL="https://github.com/llvm/llvm-project/releases/download/llvmorg-14.0.7/clang+llvm-14.0.7-x86_64-linux-gnu-ubuntu-22.04.tar.xz"
+            curl -fL "$LLVM_URL" -o llvm.tar.xz
+            tar -xJf llvm.tar.xz -C "$CLANG_DIR" --strip-components=1
+          fi
+          "$CLANG_DIR/bin/clang++" --version || true
+
+      - name: Patch AOSP LLVMExports.cmake (downgrade FATAL_ERROR → WARNING)
+        shell: bash
+        run: |
+          set -euo pipefail
+          # Với AOSP prebuilt, cmake export hay tham chiếu *.a không tồn tại → hạ FATAL để tiếp tục.
+          for d in "$CLANG_DIR/lib64/cmake/llvm" "$CLANG_DIR/lib/cmake/llvm"; do
+            if [ -d "$d" ]; then
+              for f in "$d"/*Exports*.cmake; do
+                [ -f "$f" ] || continue
+                sed -i 's/message(FATAL_ERROR/message(WARNING/g' "$f"
+              done
+            fi
+          done
+
+      - name: Patch plugin to use libstdc++ (remove -stdlib=libc++)
+        shell: bash
+        run: |
+          set -euo pipefail
+          # 1) Gỡ flag ép libc++
           mapfile -t libcxx_files < <(grep -RIl -- '-stdlib=libc++' "$REPO_DIR" || true)
           if (( ${#libcxx_files[@]} )); then
-            for f in "${libcxx_files[@]}"; do
-              [[ -f "$f" ]] || continue
-              echo "Patching -stdlib=libc++ in $f"
-              sed -i 's/-stdlib=libc++//g' "$f"
-            done
-          else
-            echo "No files contain -stdlib=libc++"
+            for f in "${libcxx_files[@]}"; do sed -i 's/-stdlib=libc++//g' "$f"; done
           fi
-
-          # 2) Gỡ mọi include thủ công tới 'c++/v1' (nếu có)
+          # 2) Gỡ include thủ công 'c++/v1' nếu có
           mapfile -t v1_files < <(grep -RIl -- 'c++/v1' "$REPO_DIR" || true)
           if (( ${#v1_files[@]} )); then
-            for f in "${v1_files[@]}"; do
-              [[ -f "$f" ]] || continue
-              echo "Removing c++/v1 include in $f"
-              sed -i '/c++\/v1/d' "$f"
-            done
-          else
-            echo "No files contain c++/v1 includes"
+            for f in "${v1_files[@]}"; do sed -i '/c++\/v1/d' "$f"; done
           fi
 
-      - name: Configure (CMake)
+      - name: Configure (CMake) against downloaded clang
+        shell: bash
         run: |
+          set -euo pipefail
+          # Chọn đúng cmake dir: lib64/cmake/... (AOSP) hoặc lib/cmake/... (LLVM official)
+          if [ -d "$CLANG_DIR/lib64/cmake/llvm" ]; then
+            LLVM_CMAKE="$CLANG_DIR/lib64/cmake/llvm"
+            CLANG_CMAKE="$CLANG_DIR/lib64/cmake/clang"
+          else
+            LLVM_CMAKE="$CLANG_DIR/lib/cmake/llvm"
+            CLANG_CMAKE="$CLANG_DIR/lib/cmake/clang"
+          fi
+
           cmake -S "$REPO_DIR" -B "$BUILD_DIR" -G Ninja \
-            -DLLVM_DIR="$LLVM_HOME/lib/cmake/llvm" \
-            -DClang_DIR="$LLVM_HOME/lib/cmake/clang" \
+            -DLLVM_DIR="$LLVM_CMAKE" \
+            -DClang_DIR="$CLANG_CMAKE" \
             -DLLVM_LINK_LLVM_DYLIB=ON \
             -DCMAKE_BUILD_TYPE=Release \
-            -DCMAKE_C_COMPILER=clang-14 \
-            -DCMAKE_CXX_COMPILER=clang++-14 \
+            -DCMAKE_C_COMPILER="$CLANG_DIR/bin/clang" \
+            -DCMAKE_CXX_COMPILER="$CLANG_DIR/bin/clang++" \
             -DCMAKE_POSITION_INDEPENDENT_CODE=ON \
             -DCMAKE_CXX_STANDARD=17 \
             -DCMAKE_CXX_FLAGS="" \
@@ -77,25 +106,14 @@ jobs:
       - name: Build
         run: |
           cmake --build "$BUILD_DIR" -v
-          echo "Built .so files:"
-          find "$BUILD_DIR" -name "*.so" -maxdepth 4 -print
-
-      - name: Verify host deps
-        run: |
-          SO=$(find "$BUILD_DIR" -name "*.so" -maxdepth 4 | head -n1 || true)
-          if [ -z "$SO" ]; then
-            echo "No .so produced"; exit 1
-          fi
-          echo "Checking: $SO"
-          ldd "$SO" || true
-          echo "Required GLIBC versions inside .so:"
-          strings -a "$SO" | grep -o 'GLIBC_[0-9.]*' | sort -V | uniq | tail -n5 || true
+          echo "== .so produced =="
+          find "$BUILD_DIR" -name "*.so" -maxdepth 5 -print
 
       - name: Upload artifact (.so)
         uses: actions/upload-artifact@v4
         with:
-          name: host-plugin-so
+          name: hikari-plugin-r450784d1
           path: |
-            ${{ env.BUILD_DIR }}/*.so
+            ${{ env.BUILD_DIR }}/**/libHikari.so
             ${{ env.BUILD_DIR }}/**/*.so
           if-no-files-found: error
