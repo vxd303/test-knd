@@ -27,7 +27,7 @@ jobs:
       - name: Install toolchain (LLVM/Clang 14)
         run: |
           sudo apt-get update
-          sudo apt-get install -y llvm-14-dev clang-14 lld-14 cmake ninja-build git
+          sudo apt-get install -y llvm-14-dev clang-14 lld-14 cmake ninja-build git libunwind-dev
 
       - name: Clone plugin source (optional if external)
         run: |
@@ -45,7 +45,7 @@ jobs:
             -DCMAKE_C_COMPILER=clang-14 \
             -DCMAKE_CXX_COMPILER=clang++-14 \
             -DCMAKE_POSITION_INDEPENDENT_CODE=ON \
-            -DCMAKE_SHARED_LINKER_FLAGS="-static-libstdc++ -static-libgcc"
+            -DCMAKE_SHARED_LINKER_FLAGS="-Wl,-Bstatic -lunwind -static-libstdc++ -static-libgcc -Wl,-Bdynamic"
 
       - name: Build
         run: |
