@@ -11,8 +11,8 @@ jobs:
     runs-on: ubuntu-latest
 
     env:
-      REPO_URL: https://github.com/LeadroyaL/llvm-pass-tutorial
-      REPO_DIR: ${{ github.workspace }}/llvm-pass-tutorial
+      REPO_URL: https://github.com/vxd303/pass-tutorial
+      REPO_DIR: ${{ github.workspace }}/pass-tutorial
       BUILD_DIR: ${{ github.workspace }}/build
       # Pin commit để giảm lỗi Gitiles; vẫn có thể thỉnh thoảng lỗi 5xx
       CLANG_TGZ_URL: https://android.googlesource.com/platform/prebuilts/clang/host/linux-x86/+archive/219e6aaa8fecc0ab0df4e691a9645ba778267af2/clang-r416183b1.tar.gz
