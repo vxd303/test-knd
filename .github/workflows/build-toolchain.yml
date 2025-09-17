@@ -11,7 +11,7 @@ jobs:
     steps:
       # (0) Mở rộng dung lượng trống
       - name: Maximize free space
-        uses: easimon/maximize-build-space@v11
+        uses: easimon/maximize-build-space@master
         with:
           root-reserve-mb: 512
           temp-reserve-mb: 512
