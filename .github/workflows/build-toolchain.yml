@@ -1,5 +1,4 @@
 name: Build OLLVM NDK Toolchain
-
 on:
   workflow_dispatch:
 
@@ -7,9 +6,12 @@ jobs:
   build:
     name: Build Patched AOSP Toolchain
     runs-on: ubuntu-22.04
+    env:
+      TMPDIR: ${{ github.workspace }}/.tmp
+      CCACHE_DIR: ${{ github.workspace }}/.ccache
 
     steps:
-      # (0) Mở rộng dung lượng trống
+      # 0) Mở rộng dung lượng trống trên runner
       - name: Maximize free space
         uses: easimon/maximize-build-space@master
         with:
@@ -21,12 +23,10 @@ jobs:
           remove-haskell: true
           remove-docker-images: true
 
-      - name: Show free space
-        run: |
-          df -h
-          echo "RAM:" && free -h
+      - name: Show free space (before)
+        run: df -h
 
-      # (1) Lấy repo patcher (shallow)
+      # 1) Checkout repo patcher (r23c)
       - name: Checkout OLLVM NDK Patcher repository
         uses: actions/checkout@v4
         with:
@@ -35,29 +35,38 @@ jobs:
           path: patcher
           fetch-depth: 1
 
-      # (2) Cài deps tối thiểu
+      # 2) Cài deps tối thiểu
       - name: Install build dependencies
         run: |
           sudo apt-get update
           sudo apt-get install -y --no-install-recommends \
-            build-essential ca-certificates cmake curl git ninja-build python3 repo bison ccache
+            build-essential ca-certificates cmake curl git ninja-build \
+            python3 bison ccache xz-utils rsync jq
           sudo apt-get clean
           sudo rm -rf /var/lib/apt/lists/*
 
-      # (3) (Nếu cần) libffi6 cũ cho build script
+      # 3) (tuỳ môi trường) libffi6 cho script cũ
       - name: Install libffi6 dependency
         run: |
           curl -sSLO http://archive.ubuntu.com/ubuntu/pool/main/libf/libffi/libffi6_3.2.1-8_amd64.deb
           sudo dpkg -i libffi6_3.2.1-8_amd64.deb || true
           rm -f libffi6_3.2.1-8_amd64.deb
 
-      # (4) Cấu hình Git cho 'repo'
-      - name: Configure Git for Repo
+      # 4) Repo tool mới nhất (tránh bản quá cũ)
+      - name: Install latest repo tool
+        run: |
+          sudo curl -sSL https://storage.googleapis.com/git-repo-downloads/repo -o /usr/local/bin/repo
+          sudo chmod +x /usr/local/bin/repo
+          repo --version || true
+
+      # 5) Cấu hình Git và thư mục tạm/cache nằm trong workspace
+      - name: Configure Git & prepare dirs
         run: |
           git config --global user.name "GitHub Actions"
           git config --global user.email "actions@github.com"
+          mkdir -p "$TMPDIR" "$CCACHE_DIR"
 
-      # (5) repo init + sync (nông, không tags, không bundle)
+      # 6) repo init + sync (partial clone blobless; nếu fail thì fallback)
       - name: Initialize and Sync AOSP Toolchain Source
         run: |
           set -euxo pipefail
@@ -66,60 +75,88 @@ jobs:
           repo init -u https://android.googlesource.com/platform/manifest -b llvm-toolchain
           cp ../patcher/manifest_8481493.xml .repo/manifests/
           repo init -m manifest_8481493.xml
-          # sync nông & sạch
-          repo sync -c \
-            --no-clone-bundle \
-            --no-tags \
-            --optimized-fetch \
-            --prune \
-            -j$(nproc)
 
-      # (6) Áp patch OLLVM
-      - name: Apply OLLVM patches
+          if repo sync -c \
+              --no-clone-bundle \
+              --no-tags \
+              --optimized-fetch \
+              --prune \
+              --partial-clone \
+              --clone-filter=blob:none \
+              -j"$(nproc)"; then
+            echo "Partial clone OK"
+          else
+            echo "Partial clone failed; fallback to normal slim sync"
+            repo sync -c \
+              --no-clone-bundle \
+              --no-tags \
+              --optimized-fetch \
+              --prune \
+              -j"$(nproc)"
+          fi
+
+      # 7) Overlay OLLVM (KHÔNG đè nguyên cây llvm/)
+      - name: Apply OLLVM overlay (non-destructive)
         run: |
           set -euxo pipefail
-          rsync -a --delete patcher/llvm/ aosp_toolchain_src/toolchain/llvm-project/llvm/
+          # Chỉ overlay thư mục Obfuscation (lib + include)
+          rsync -a patcher/llvm/lib/Transforms/Obfuscation/ \
+            aosp_toolchain_src/toolchain/llvm-project/llvm/lib/Transforms/Obfuscation/
+          rsync -a patcher/llvm/include/llvm/Transforms/Obfuscation/ \
+            aosp_toolchain_src/toolchain/llvm-project/llvm/include/llvm/Transforms/Obfuscation/
 
-      # (7) Build tối thiểu (bỏ windows, không package, không runtimes)
-      - name: Run the build script
+          # Bổ sung add_subdirectory(Obfuscation) nếu chưa có
+          T="aosp_toolchain_src/toolchain/llvm-project/llvm/lib/Transforms/CMakeLists.txt"
+          if ! grep -q 'add_subdirectory(Obfuscation)' "$T"; then
+            echo 'add_subdirectory(Obfuscation)' >> "$T"
+          fi
+
+      # 8) Build tối thiểu (bỏ windows/darwin, skip package & runtimes)
+      - name: Build AOSP LLVM (minimal)
         timeout-minutes: 360
         working-directory: ./aosp_toolchain_src
-        env:
-          CCACHE_DIR: /home/runner/.ccache
         run: |
           set -euxo pipefail
           ccache --max-size=2G || true
           python3 toolchain/llvm_android/build.py \
             --no-build=windows \
+            --no-build=darwin \
             --skip-package \
             --skip-runtimes
           ccache -s || true
           du -sh out || true
+          df -h
 
-      # (8) Dọn build tree, chỉ giữ install để giảm dung lượng
+      # 9) Dọn build tree: chỉ giữ install/linux-x86
       - name: Prune build outputs (keep install only)
         working-directory: ./aosp_toolchain_src
         run: |
           set -euxo pipefail
-          ls -la out || true
-          # Giữ mỗi out/install; xoá phần còn lại
+          # Giữ mỗi out/install
           find out -mindepth 1 -maxdepth 1 ! -name install -exec rm -rf {} +
+          # Giữ linux-x86 bên trong install (nếu có multi-host)
+          if [ -d out/install ]; then
+            find out/install -mindepth 1 -maxdepth 1 ! -name linux-x86 -exec rm -rf {} + || true
+          fi
           du -sh out || true
           df -h
 
-      # (9) Đóng gói install (xz -9e)
+      # 10) Đóng gói (xz -9e)
       - name: Package the toolchain
         working-directory: ./aosp_toolchain_src/out/install/linux-x86
         run: |
           set -euxo pipefail
-          tar -cJf ../../../toolchain.tar.xz .
+          tar -I 'xz -9e' -cf ../../../toolchain.tar.xz .
           du -sh ../../../toolchain.tar.xz
           df -h
 
-      # (10) Upload artifact duy nhất
+      # 11) Upload artifact
       - name: Upload build artifact
         uses: actions/upload-artifact@v4
         with:
           name: patched-aosp-toolchain
           path: aosp_toolchain_src/out/toolchain.tar.xz
           retention-days: 7
+
+      - name: Show free space (after)
+        run: df -h
