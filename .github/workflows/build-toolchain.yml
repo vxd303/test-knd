@@ -6,83 +6,120 @@ on:
 jobs:
   build:
     name: Build Patched AOSP Toolchain
-    runs-on: ubuntu-latest
+    runs-on: ubuntu-22.04
 
     steps:
+      # (0) Mở rộng dung lượng trống
+      - name: Maximize free space
+        uses: easimon/maximize-build-space@v11
+        with:
+          root-reserve-mb: 512
+          temp-reserve-mb: 512
+          swap-size-mb: 1
+          remove-android: true
+          remove-dotnet: true
+          remove-haskell: true
+          remove-docker-images: true
+
+      - name: Show free space
+        run: |
+          df -h
+          echo "RAM:" && free -h
+
+      # (1) Lấy repo patcher (shallow)
       - name: Checkout OLLVM NDK Patcher repository
         uses: actions/checkout@v4
         with:
           repository: codetronik/ollvm-ndk
           ref: r23c
           path: patcher
+          fetch-depth: 1
 
+      # (2) Cài deps tối thiểu
       - name: Install build dependencies
         run: |
           sudo apt-get update
           sudo apt-get install -y --no-install-recommends \
-            build-essential ca-certificates ccache cmake curl git ninja-build python3 bison
+            build-essential ca-certificates cmake curl git ninja-build python3 repo bison ccache
+          sudo apt-get clean
+          sudo rm -rf /var/lib/apt/lists/*
 
+      # (3) (Nếu cần) libffi6 cũ cho build script
       - name: Install libffi6 dependency
         run: |
-          curl -LO http://archive.ubuntu.com/ubuntu/pool/main/libf/libffi/libffi6_3.2.1-8_amd64.deb
-          sudo dpkg -i libffi6_3.2.1-8_amd64.deb
+          curl -sSLO http://archive.ubuntu.com/ubuntu/pool/main/libf/libffi/libffi6_3.2.1-8_amd64.deb
+          sudo dpkg -i libffi6_3.2.1-8_amd64.deb || true
+          rm -f libffi6_3.2.1-8_amd64.deb
 
-      - name: Install latest repo launcher (v2.58)
-        run: |
-          mkdir -p ~/.local/bin
-          git clone --depth=1 --branch=v2.58 https://gerrit.googlesource.com/git-repo repo-launcher
-          cp repo-launcher/repo ~/.local/bin/repo
-          chmod +x ~/.local/bin/repo
-          echo "$HOME/.local/bin" >> $GITHUB_PATH
-          export PATH="$HOME/.local/bin:$PATH"
-          repo --version
-
+      # (4) Cấu hình Git cho 'repo'
       - name: Configure Git for Repo
         run: |
           git config --global user.name "GitHub Actions"
           git config --global user.email "actions@github.com"
 
-      - name: Clean old source directory if exists
-        run: |
-          rm -rf aosp_toolchain_src
-
+      # (5) repo init + sync (nông, không tags, không bundle)
       - name: Initialize and Sync AOSP Toolchain Source
-        env:
-          REPO_ALLOW_SHALLOW: "1"
         run: |
+          set -euxo pipefail
           mkdir aosp_toolchain_src
           cd aosp_toolchain_src
-
-          # Init repo with depth=1
-          repo init --depth=1 -u https://android.googlesource.com/platform/manifest -b llvm-toolchain
-
-          # Use custom manifest
+          repo init -u https://android.googlesource.com/platform/manifest -b llvm-toolchain
           cp ../patcher/manifest_8481493.xml .repo/manifests/
-          repo init --depth=1 -m manifest_8481493.xml
+          repo init -m manifest_8481493.xml
+          # sync nông & sạch
+          repo sync -c \
+            --no-clone-bundle \
+            --no-tags \
+            --optimized-fetch \
+            --prune \
+            -j$(nproc)
 
-          # Check version
-          .repo/repo/repo --version
-
-          # Sync
-          repo sync -c -j$(nproc) --no-clone-bundle --no-tags --depth=1
-
+      # (6) Áp patch OLLVM
       - name: Apply OLLVM patches
         run: |
-          cp -rf patcher/llvm aosp_toolchain_src/toolchain/llvm-project/
+          set -euxo pipefail
+          rsync -a --delete patcher/llvm/ aosp_toolchain_src/toolchain/llvm-project/llvm/
 
+      # (7) Build tối thiểu (bỏ windows, không package, không runtimes)
       - name: Run the build script
         timeout-minutes: 360
         working-directory: ./aosp_toolchain_src
-        run: python3 toolchain/llvm_android/build.py --no-build=windows --skip-package --skip-runtimes
-
-      - name: Package the toolchain
+        env:
+          CCACHE_DIR: /home/runner/.ccache
         run: |
-          cd aosp_toolchain_src/out/install/linux-x86
-          tar -cJf ../../../toolchain.tar.xz .
+          set -euxo pipefail
+          ccache --max-size=2G || true
+          python3 toolchain/llvm_android/build.py \
+            --no-build=windows \
+            --skip-package \
+            --skip-runtimes
+          ccache -s || true
+          du -sh out || true
 
+      # (8) Dọn build tree, chỉ giữ install để giảm dung lượng
+      - name: Prune build outputs (keep install only)
+        working-directory: ./aosp_toolchain_src
+        run: |
+          set -euxo pipefail
+          ls -la out || true
+          # Giữ mỗi out/install; xoá phần còn lại
+          find out -mindepth 1 -maxdepth 1 ! -name install -exec rm -rf {} +
+          du -sh out || true
+          df -h
+
+      # (9) Đóng gói install (xz -9e)
+      - name: Package the toolchain
+        working-directory: ./aosp_toolchain_src/out/install/linux-x86
+        run: |
+          set -euxo pipefail
+          tar -cJf ../../../toolchain.tar.xz .
+          du -sh ../../../toolchain.tar.xz
+          df -h
+
+      # (10) Upload artifact duy nhất
       - name: Upload build artifact
         uses: actions/upload-artifact@v4
         with:
           name: patched-aosp-toolchain
-          path: aosp_toolchain_src/toolchain.tar.xz
+          path: aosp_toolchain_src/out/toolchain.tar.xz
           retention-days: 7
