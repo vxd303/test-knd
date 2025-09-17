@@ -120,7 +120,6 @@ jobs:
           ccache --max-size=2G || true
           python3 toolchain/llvm_android/build.py \
             --no-build=windows \
-            --no-build=darwin \
             --skip-package \
             --skip-runtimes
           ccache -s || true
