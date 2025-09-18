@@ -31,7 +31,7 @@ jobs:
         uses: actions/checkout@v4
         with:
           repository: codetronik/ollvm-ndk
-          ref: r23c
+          ref: r25c
           path: patcher
           fetch-depth: 1
 
@@ -126,35 +126,50 @@ jobs:
           du -sh out || true
           df -h
 
-      # 9) Dọn build tree: chỉ giữ install/linux-x86
-      - name: Prune build outputs (keep install only)
+       # 9) Dọn out/*, giữ mỗi stage2-install (để nhẹ đĩa)
+      - name: Prune build outputs (keep stage2-install only)
         working-directory: ./aosp_toolchain_src
         run: |
           set -euxo pipefail
-          # Giữ mỗi out/install
-          find out -mindepth 1 -maxdepth 1 ! -name install -exec rm -rf {} +
-          # Giữ linux-x86 bên trong install (nếu có multi-host)
-          if [ -d out/install ]; then
-            find out/install -mindepth 1 -maxdepth 1 ! -name linux-x86 -exec rm -rf {} + || true
+          if [ -d out ]; then
+            find out -mindepth 1 -maxdepth 1 ! -name stage2-install -exec rm -rf {} +
           fi
           du -sh out || true
           df -h
 
-      # 10) Đóng gói (xz -9e)
-      - name: Package the toolchain
-        working-directory: ./aosp_toolchain_src/out/install/linux-x86
+      # 10) Xác định đường dẫn clang bin
+      - name: Locate stage2 clang bin
+        working-directory: ./aosp_toolchain_src/out
         run: |
           set -euxo pipefail
-          tar -I 'xz -9e' -cf ../../../toolchain.tar.xz .
-          du -sh ../../../toolchain.tar.xz
+          if [ -d stage2-install/bin ]; then
+            echo "CLANG_BIN=$PWD/stage2-install/bin" >> "$GITHUB_ENV"
+            echo "Found: $PWD/stage2-install/bin"
+            ls -l stage2-install/bin | sed 's/^/  /'
+          else
+            echo "ERROR: stage2-install/bin not found."
+            echo "Candidates:"
+            find . -maxdepth 3 -type d -name bin -printf '%p\n' | sed 's/^/  /'
+            exit 1
+          fi
+
+      # 11) Đóng gói tối thiểu: chỉ file bắt đầu bằng 'clang' trong bin/
+      - name: Package minimal clang binaries
+        run: |
+          set -euxo pipefail
+          mkdir -p pkg/bin
+          shopt -s nullglob
+          cp -av "$CLANG_BIN"/clang* pkg/bin/
+          tar -I 'xz -9e' -cf clang-minimal.tar.xz -C pkg .
+          du -sh clang-minimal.tar.xz
           df -h
 
-      # 11) Upload artifact
+      # 12) Upload artifact
       - name: Upload build artifact
         uses: actions/upload-artifact@v4
         with:
-          name: patched-aosp-toolchain
-          path: aosp_toolchain_src/out/toolchain.tar.xz
+          name: clang-minimal-stage2
+          path: clang-minimal.tar.xz
           retention-days: 7
 
       - name: Show free space (after)
