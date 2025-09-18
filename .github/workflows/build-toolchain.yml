@@ -30,7 +30,7 @@ jobs:
       - name: Checkout OLLVM NDK Patcher repository
         uses: actions/checkout@v4
         with:
-          repository: codetronik/ollvm-ndk
+          repository: vxd303/vvlm-knd
           ref: r25c
           path: patcher
           fetch-depth: 1
